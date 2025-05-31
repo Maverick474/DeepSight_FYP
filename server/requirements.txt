@@ -1,0 +1,10 @@
+torch
+torchvision
+face_recognition
+opencv-python
+matplotlib
+numpy
+pillow
+fastapi
+uvicorn
+motor
