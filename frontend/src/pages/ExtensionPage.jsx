@@ -51,7 +51,7 @@ const ExtensionPage = () => {
           Detect deepfakes directly in your browser while browsing social media
         </p>
         <Button className="py-2 px-5 text-dark">
-          <a href="" className="text-decoration-none text-dark">
+          <a target="_blank" rel="noopener noreferrer" href="https://drive.google.com/drive/folders/1nz8fbP6SZDpqRGEiQACvBxXhTetnhXo-?usp=sharing" className="text-decoration-none text-dark">
             Download Now &rArr;
           </a>
         </Button>
@@ -149,7 +149,7 @@ const ExtensionPage = () => {
       <div className="text-center" style={{padding: '100px 0'}}>
         <h1 className="text-color fw-bold">Start Detecting Deepfakes Today</h1>
         <p className="text-mute">Download the DeepDetect browser extension and protect yourself from manipulated media</p>
-        <Button className="py-2 mt-2 text-dark">Download Extension &rarr;</Button>
+        <Button className="py-2 mt-2 text-dark"><a className="text-decoration-none text-dark" href="https://drive.google.com/drive/folders/1nz8fbP6SZDpqRGEiQACvBxXhTetnhXo-?usp=sharing" target="_blank" rel="noopener noreferrer">Download Extension &rarr;</a></Button>
         <Button variant="outline-primary" className="py-2 mt-2 ms-3 text-white"><Link to='/predict' className='text-decoration-none text-white'>Try Web Version &rarr;</Link></Button>
       </div>
 
