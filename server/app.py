@@ -57,7 +57,7 @@ train_transforms = transforms.Compose([
 
 ALLOWED_VIDEO_EXTENSIONS = {'mp4', 'gif', 'webm', 'avi', '3gp', 'wmv', 'flv', 'mkv'}
 
-# UPDATED for GPU: Detect device
+# Detects GPU in device 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class Model(nn.Module):
@@ -425,6 +425,7 @@ async def process_video(video_file, sequence_length):
             detail=f"Error processing video: {str(e)}"
         )
 
+#Extension Endpoint
 @app.post("/predict")
 
 async def predict_frames(data: dict):
