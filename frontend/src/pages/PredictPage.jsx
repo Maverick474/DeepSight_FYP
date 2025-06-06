@@ -148,7 +148,7 @@ const UploadPage = () => {
               <div className="d-flex align-items-center">
                 <div className="text-mute">Confidence: {result.confidence}%</div>
               </div>
-              <p className="mb-2 text-mute">Model Accuracy: {result.accuracy}%</p>
+              {/* <p className="mb-2 text-mute">Model Accuracy: {result.accuracy}%</p> */}
               <p className="mb-2 text-mute">Frames Processed: {result.frames_processed}</p>
             </div>
 
