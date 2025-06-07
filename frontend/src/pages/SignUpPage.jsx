@@ -69,14 +69,14 @@ const SignUpPage = () => {
         <div className="container text-center py-4 w-50" style={{backgroundColor: 'rgba(255, 255, 255, 0.05)'}}>
           <h1 className='text-color mb-4'>Sign Up</h1>
         <form className='d-flex flex-column gap-2' onSubmit={handleSubmit}>
-          <label className='text-white mt-3'>Enter Your Name</label>
+          <label className='text-white mt-3'>Enter Your Full Name</label>
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
             style={{backgroundColor: '#94A3B8'}} 
             className='w-50 mx-auto p-2' 
             type="text" 
-            placeholder="Name"
+            placeholder="Tim Jordan"
             required 
           />
 
@@ -89,7 +89,7 @@ const SignUpPage = () => {
             type="number" 
             min="13"
             max="100"
-            placeholder="Age"
+            placeholder="24"
             required 
           />
 

@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import {motion} from 'motion/react'
 
 const FAQ = () => {
   const [openQuestion, setOpenQuestion] = useState(null);
@@ -37,7 +38,11 @@ const FAQ = () => {
 
   return (
     <div className="custom-bg min-vh-100 py-5">
-      <div className="container py-5">
+      <motion.div
+      initial={{opacity: 0}}
+      animate={{opacity: 1}}
+      transition={{duration: 1, delay: 0.5}} 
+      className="container py-5">
         <h1 className="text-color text-center display-5 fw-bold mb-2">Frequently Asked Questions</h1>
         <p className="text-center text-mute fs-5 mb-5">Get answers to common questions about deepfake detection</p>
         
@@ -90,7 +95,7 @@ const FAQ = () => {
             </div>
           ))}
         </div>
-      </div>
+      </motion.div>
     </div>
   )
 }

@@ -112,7 +112,7 @@ const Hero = () => {
               <div className="p-4 rounded-3" style={{backgroundColor: '#0F1729', border: '1px solid #1E40AF'}}>
                 <h3 className="text-color">Face Manipulation Detection</h3>
                 <p className="text-mute">Identify facial manipulations with high precision</p>
-                <p className="text-white">Our AI can detect subtle inconsistencies in facial features, lighting, and expressions that indicate manipulation.</p>
+                <p className="text-white">Our model can detect subtle inconsistencies in facial features, lighting, and expressions that indicate manipulation.</p>
               </div>
             </motion.div>
 

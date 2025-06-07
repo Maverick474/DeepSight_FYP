@@ -4,6 +4,7 @@ import Icon from "../assets/download-icon.png";
 import Tick from "../assets/tick.png";
 import Extension from "../assets/extension.jpg";
 import { Container, Row, Col, Badge } from "react-bootstrap";
+import {motion} from 'motion/react'
 import { Link } from "react-router-dom";
 
 const ExtensionPage = () => {
@@ -37,7 +38,10 @@ const ExtensionPage = () => {
 
   return (
     <div style={{ backgroundColor: "#0F1729" }}>
-      <div
+      <motion.div
+      initial={{opacity: 0}}
+      animate={{opacity: 1}}
+      transition={{duration: 1, delay: 0.5}}
         className="container d-flex flex-column align-items-center justify-content-center"
         style={{ padding: "200px 0" }}
       >
@@ -55,10 +59,15 @@ const ExtensionPage = () => {
             Download Now &rArr;
           </a>
         </Button>
-      </div>
+      </motion.div>
 
       <div className="container d-flex flex-column flex-md-row justify-content-around align-items-center">
-        <div className="col-md-6 col-12">
+        <motion.div
+        initial={{opacity: 0, x: -50}}
+        whileInView={{opacity: 1, x: 0}}
+        viewport={{once: true, amount: 0.5}}
+        transition={{duration: 1, delay: 0.5}}
+         className="col-md-6 col-12">
           <h1 className="text-color fw-bold">Detect Deepfake While Browsing</h1>
           <p className="text-mute">
             Our browser extension brings the power of DeepDetect directly to
@@ -93,32 +102,52 @@ const ExtensionPage = () => {
               when potential deepfakes are detected
             </li>
           </ol>
-        </div>
+        </motion.div>
 
-        <div className="col-md-6 col-12 d-flex justify-content-center">
+        <motion.div
+        initial={{opacity: 0, x: 50}}
+        whileInView={{opacity: 1, x: 0}}
+        viewport={{once: true, amount: 0.5}}
+        transition={{duration: 1, delay: 0.5}}
+         className="col-md-6 col-12 d-flex justify-content-center">
           <img src={Extension} alt="" />
-        </div>
+        </motion.div>
       </div>
 
       {/* How to Use Section */}
       <div style={{padding: '100px 0'}}>
         <Container>
           <Row className="justify-content-center text-center mb-5">
-            <Col lg={8}>
-              <h2 className="display-4 fw-bold text-color">
+            <Col
+             lg={8}>
+              <motion.h2
+              initial={{opacity: 0}}
+              whileInView={{opacity: 1}}
+              viewport={{once: true, amount: 0.5}}
+              transition={{duration: 1, delay: 0.5}}
+               className="display-4 fw-bold text-color">
                 How to Use
-              </h2>
-              <p className="lead text-mute fs-5 lh-lg">
+              </motion.h2>
+              <motion.p
+              initial={{opacity: 0}}
+              whileInView={{opacity: 1}}
+              viewport={{once: true, amount: 0.5}}
+              transition={{duration: 1, delay: 0.5}}
+               className="lead text-mute fs-5 lh-lg">
                 Get started with the DeepDetect browser extension in just a few
                 simple steps
-              </p>
+              </motion.p>
             </Col>
           </Row>
 
           <Row className="justify-content-center">
             <Col xl={8} lg={10}>
               {steps.map((step, index) => (
-                <div
+                <motion.div
+                initial={{opacity: 0, y: -50}}
+                whileInView={{opacity: 1, y: 0}}
+                viewport={{once: true, amount: 0.5}}
+                transition={{duration: 1, delay: 0.5}}
                   key={index}
                   className="d-flex align-items-start mb-4 position-relative"
                 >
@@ -139,19 +168,24 @@ const ExtensionPage = () => {
                     <h4 className="fw-semibold mb-2 text-white">{step.title}</h4>
                     <p className="text-mute mb-0 lh-lg">{step.description}</p>
                   </div>
-                </div>
+                </motion.div>
               ))}
             </Col>
           </Row>
         </Container>
       </div>
 
-      <div className="text-center" style={{padding: '100px 0'}}>
+      <motion.div
+      initial={{opacity: 0}}
+      whileInView={{opacity: 1}}
+      viewport={{once: true, amount: 0.5}}
+      transition={{duration: 1, delay: 0.5}} 
+      className="text-center" style={{padding: '100px 0'}}>
         <h1 className="text-color fw-bold">Start Detecting Deepfakes Today</h1>
         <p className="text-mute">Download the DeepDetect browser extension and protect yourself from manipulated media</p>
         <Button className="py-2 mt-2 text-dark"><a className="text-decoration-none text-dark" href="https://drive.google.com/drive/folders/1nz8fbP6SZDpqRGEiQACvBxXhTetnhXo-?usp=sharing" target="_blank" rel="noopener noreferrer">Download Extension &rarr;</a></Button>
         <Button variant="outline-primary" className="py-2 mt-2 ms-3 text-white"><Link to='/predict' className='text-decoration-none text-white'>Try Web Version &rarr;</Link></Button>
-      </div>
+      </motion.div>
 
     </div>
   );
