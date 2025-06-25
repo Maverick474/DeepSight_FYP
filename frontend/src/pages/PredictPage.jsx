@@ -7,6 +7,7 @@ const UploadPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [activeTab, setActiveTab] = useState("analysis"); // New state for tabs
 
   const handleFileSelect = (event) => {
     const file = event.target.files[0];
@@ -19,7 +20,7 @@ const UploadPage = () => {
       if (allowedTypes.includes(fileExtension)) {
         setSelectedFile(file);
         setError(null);
-        setResult(null); // Reset results when new file is selected
+        setResult(null);
       } else {
         setError(
           "Please select a valid video file (mp4, webm, avi, 3gp, wmv, flv, mkv, gif)"
@@ -40,7 +41,7 @@ const UploadPage = () => {
 
     const formData = new FormData();
     formData.append("file", selectedFile);
-    formData.append("sequence_length", 20);
+    formData.append("sequence_length", 40);
 
     try {
       const response = await fetch("http://localhost:8000/api/upload", {
@@ -66,6 +67,7 @@ const UploadPage = () => {
     setSelectedFile(null);
     setError(null);
     setResult(null);
+    setActiveTab("analysis"); // Reset to default tab
     const fileInput = document.getElementById("video-upload");
     if (fileInput) fileInput.value = "";
   };
@@ -148,32 +150,118 @@ const UploadPage = () => {
               <div className="d-flex align-items-center">
                 <div className="text-mute">Confidence: {result.confidence}%</div>
               </div>
-              {/* <p className="mb-2 text-mute">Model Accuracy: {result.accuracy}%</p> */}
               <p className="mb-2 text-mute">Frames Processed: {result.frames_processed}</p>
             </div>
 
-            {result.analysis_image && (
-              <div>
-                <h3 className="mb-3 text-color">AI Analysis Visualization</h3>
-                <img 
-                  src={`http://localhost:8000${result.analysis_image}`}
-                  alt="GradCAM Analysis"
-                  className="img-fluid mb-3"
-                />
-                {result.gradcam_explanation && (
-                  <div>
-                    <h4 className="mb-3 text-color">Understanding the Heatmap:</h4>
-                    <p className="text-mute">{result.gradcam_explanation.description}</p>
-                    <ul className="list-group mb-3">
-                      <li className="list-group-item custom-color text-mute"><strong>Red areas:</strong> {result.gradcam_explanation.interpretation.red_areas}</li>
-                      <li className="list-group-item custom-color text-mute"><strong>Yellow areas:</strong> {result.gradcam_explanation.interpretation.yellow_areas}</li>
-                      <li className="list-group-item custom-color text-mute"><strong>Blue areas:</strong> {result.gradcam_explanation.interpretation.blue_areas}</li>
-                    </ul>
-                    <p className="text-mute"><strong>Prediction Basis:</strong> {result.gradcam_explanation.prediction_basis}</p>
+            {/* Tab Navigation */}
+            <ul className="nav nav-tabs mb-4">
+              <li className="nav-item">
+                <button 
+                  className={`nav-link ${activeTab === "analysis" ? "active" : ""}`}
+                  onClick={() => setActiveTab("analysis")}
+                >
+                  AI Analysis
+                </button>
+              </li>
+              <li className="nav-item">
+                <button 
+                  className={`nav-link ${activeTab === "frames" ? "active" : ""}`}
+                  onClick={() => setActiveTab("frames")}
+                >
+                  Processed Frames
+                </button>
+              </li>
+              <li className="nav-item">
+                <button 
+                  className={`nav-link ${activeTab === "faces" ? "active" : ""}`}
+                  onClick={() => setActiveTab("faces")}
+                >
+                  Cropped Faces
+                </button>
+              </li>
+            </ul>
+
+            {/* Tab Content */}
+            <div className="tab-content">
+              {/* Analysis Tab */}
+              {activeTab === "analysis" && (
+                <div className="tab-pane fade show active">
+                  {result.analysis_image && (
+                    <div>
+                      <h3 className="mb-3 text-color">AI Analysis Visualization</h3>
+                      <img 
+                        src={`http://localhost:8000${result.analysis_image}`}
+                        alt="GradCAM Analysis"
+                        className="img-fluid mb-3 rounded"
+                      />
+                      {result.gradcam_explanation && (
+                        <div>
+                          <h4 className="mb-3 text-color">Understanding Attention Heatmap:</h4>
+                          <p className="text-mute">{result.gradcam_explanation.description}</p>
+                          <ul className="list-group mb-3">
+                            <li className="list-group-item custom-color text-mute"><strong>Red areas:</strong> {result.gradcam_explanation.interpretation.red_areas}</li>
+                            <li className="list-group-item custom-color text-mute"><strong>Yellow areas:</strong> {result.gradcam_explanation.interpretation.yellow_areas}</li>
+                            <li className="list-group-item custom-color text-mute"><strong>Blue areas:</strong> {result.gradcam_explanation.interpretation.blue_areas}</li>
+                          </ul>
+                          <p className="text-mute"><strong>Prediction Basis:</strong> {result.gradcam_explanation.prediction_basis}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Processed Frames Tab */}
+              {activeTab === "frames" && result.annotated_images?.length > 0 && (
+                <div className="tab-pane fade show active">
+                  <h3 className="mb-3 text-color">Processed Video Frames</h3>
+                  <p className="text-mute mb-3">
+                    These frames show where faces were detected in your video. Green boxes highlight 
+                    the facial areas for real and red boxes highlight the facial areas for fake used for analysis.
+                  </p>
+                  <div className="d-flex overflow-auto pb-3" style={{ maxHeight: "400px" }}>
+                    <div className="d-flex flex-wrap justify-content-center">
+                      {result.annotated_images.map((img, index) => (
+                        <div key={index} className="m-2 text-center">
+                          <img 
+                            src={`http://localhost:8000${img}`}
+                            alt={`Processed frame ${index + 1}`}
+                            className="img-thumbnail"
+                            style={{ maxWidth: "250px" }}
+                          />
+                          <div className="small text-mute mt-1">Frame {index + 1}</div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                )}
-              </div>
-            )}
+                </div>
+              )}
+
+              {/* Cropped Faces Tab */}
+              {activeTab === "faces" && result.faces_cropped_images?.length > 0 && (
+                <div className="tab-pane fade show active">
+                  <h3 className="mb-3 text-color">Facial Regions Analyzed</h3>
+                  <p className="text-mute mb-3">
+                    These cropped facial regions were extracted and analyzed for deepfake detection.
+                  </p>
+                  <div className="d-flex overflow-auto pb-3" style={{ maxHeight: "400px" }}>
+                    <div className="d-flex flex-wrap justify-content-center">
+                      {result.faces_cropped_images.map((img, index) => (
+                        <div key={index} className="m-2 text-center">
+                          <img 
+                            src={`http://localhost:8000${img}`}
+                            alt={`Cropped face ${index + 1}`}
+                            className="img-thumbnail"
+                            style={{ maxWidth: "150px" }}
+                          />
+                          <div className="small text-mute mt-1">Face {index + 1}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
 
             <Button
               variant="primary"

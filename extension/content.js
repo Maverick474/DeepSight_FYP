@@ -1,8 +1,9 @@
 // Configuration
 const API_BASE = 'http://localhost:8000';
 const API_ENDPOINT = `${API_BASE}/predict`;
-const FRAME_SEQUENCE_LENGTH = 20;
+const FRAME_SEQUENCE_LENGTH = 40;
 const MIN_VIDEO_DIMENSION = 100; // px - ignore tiny videos
+const MAX_VIDEO_DURATION = 30 * 60; // 30 minutes in seconds
 
 // Video platform selectors with comprehensive coverage
 const VIDEO_SELECTORS = {
@@ -79,7 +80,7 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
   }
 });
 
-// Listen for messages from popup
+// Listen for messages from popup - FIXED VERSION
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   console.log('DeepSight: Received message:', request);
   
@@ -87,21 +88,33 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     console.log('DeepSight: Activating...');
     extensionActive = true;
     initializeDetection();
+    sendResponse({ success: true });
   } 
   else if (request.action === 'deactivate') {
     console.log('DeepSight: Deactivating...');
     extensionActive = false;
     removeAllButtons();
+    sendResponse({ success: true });
   }
   else if (request.action === 'analyzeVideoInPopup') {
     if (extensionActive) {
-      // Find video by ID first, then fallback to src matching
+      console.log('DeepSight: Analyzing video in popup - request:', request);
+      
+      // Find video by ID first, then fallback to other methods
       let video = null;
       
+      console.log('DeepSight: Looking for video with ID:', request.videoId);
+      console.log('DeepSight: Video registry contents:', Array.from(videoRegistry.keys()));
+      
+      // Method 1: Find by stored ID
       if (request.videoId) {
         video = videoRegistry.get(request.videoId);
-      } else if (request.videoSrc) {
-        // Fallback to src matching
+        console.log('DeepSight: Found video by ID:', !!video);
+      }
+      
+      // Method 2: Find by src if ID lookup failed
+      if (!video && request.videoSrc && request.videoSrc !== 'dynamic') {
+        console.log('DeepSight: Trying to find video by src:', request.videoSrc);
         video = document.querySelector(`video[src="${request.videoSrc}"]`);
         if (!video) {
           // Try currentSrc
@@ -113,35 +126,54 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             }
           }
         }
+        console.log('DeepSight: Found video by src:', !!video);
       }
       
+      // Method 3: Find the most likely video if others failed
       if (!video) {
-        // Last resort: find the most likely video
+        console.log('DeepSight: No video found by ID or src, finding most likely video...');
         video = findMostLikelyVideo();
+        console.log('DeepSight: Found most likely video:', !!video);
+        
+        // If we found a video, make sure it's registered
+        if (video && !video.dataset.deepdetectId) {
+          const videoId = generateVideoId(video);
+          video.dataset.deepdetectId = videoId;
+          videoRegistry.set(videoId, video);
+          console.log('DeepSight: Registered new video with ID:', videoId);
+        }
+      }
+      
+      // Method 4: YouTube specific fallback - force re-scan
+      if (!video && window.location.hostname.includes('youtube.com')) {
+        console.log('DeepSight: YouTube fallback - forcing video re-scan...');
+        processVideos(); // Re-scan for videos
+        
+        // Try to find the most likely video again
+        setTimeout(() => {
+          video = findMostLikelyVideo();
+          if (video) {
+            console.log('DeepSight: Found video after YouTube re-scan');
+            proceedWithAnalysis(video, sendResponse);
+          } else {
+            console.error('DeepSight: Still no video found after YouTube re-scan');
+            sendResponse({ success: false, error: 'No video found after re-scan' });
+          }
+        }, 500);
+        return true; // Keep message channel open
       }
       
       if (video) {
-        console.log('DeepSight: Found video for analysis:', video);
-        analyzeVideo(video).then(result => {
-          chrome.runtime.sendMessage({
-            action: 'analysisResult',
-            result: result
-          });
-        }).catch(error => {
-          console.error('DeepSight: Analysis failed:', error);
-          chrome.runtime.sendMessage({
-            action: 'analysisResult',
-            result: { error: error.message }
-          });
-        });
+        proceedWithAnalysis(video, sendResponse);
       } else {
         console.error('DeepSight: Video not found for analysis');
-        chrome.runtime.sendMessage({
-          action: 'analysisResult',
-          result: { error: 'Video not found' }
-        });
+        sendResponse({ success: false, error: 'Video not found' });
       }
+    } else {
+      console.log('DeepSight: Extension not active');
+      sendResponse({ success: false, error: 'Extension not active' });
     }
+    return true; // Keep message channel open for async response
   }
   else if (request.action === 'getVideoInfo') {
     // Find the most relevant video
@@ -152,8 +184,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         src: video.src,
         currentSrc: video.currentSrc,
         videoWidth: video.videoWidth,
-        videoHeight: video.videoHeight
+        videoHeight: video.videoHeight,
+        duration: video.duration
       });
+      
+      // Generate and store unique ID if not already present
+      let videoId = video.dataset.deepdetectId;
+      if (!videoId) {
+        videoId = generateVideoId(video);
+        video.dataset.deepdetectId = videoId;
+        videoRegistry.set(videoId, video);
+        console.log('DeepSight: Generated new video ID:', videoId);
+      }
       
       // Create a thumbnail from the video
       const canvas = document.createElement('canvas');
@@ -167,12 +209,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         ctx.drawImage(video, 0, 0, width, height);
         const thumbnail = canvas.toDataURL('image/jpeg', 0.8);
         
-        const videoId = video.dataset.deepdetectId || generateVideoId(video);
-        if (!video.dataset.deepdetectId) {
-          video.dataset.deepdetectId = videoId;
-          videoRegistry.set(videoId, video);
-        }
-        
         sendResponse({
           hasVideo: true,
           videoInfo: {
@@ -180,16 +216,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             src: video.src || video.currentSrc || 'dynamic',
             thumbnail: thumbnail,
             width: width,
-            height: height
+            height: height,
+            duration: video.duration
           }
         });
       } catch (e) {
         console.error('Error creating thumbnail:', e);
-        const videoId = video.dataset.deepdetectId || generateVideoId(video);
-        if (!video.dataset.deepdetectId) {
-          video.dataset.deepdetectId = videoId;
-          videoRegistry.set(videoId, video);
-        }
         
         sendResponse({ 
           hasVideo: true,
@@ -199,35 +231,98 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             thumbnail: null,
             width: width,
             height: height,
+            duration: video.duration,
             error: 'Could not create thumbnail - CORS restriction'
           }
         });
       }
     } else {
+      console.log('DeepSight: No video found for getVideoInfo');
       sendResponse({ hasVideo: false });
     }
     return true; // Keep the message channel open for async response
   }
+  
   return true;
 });
 
-// Find the most likely video to analyze
+// Helper function to proceed with analysis
+function proceedWithAnalysis(video, sendResponse) {
+  console.log('DeepSight: Proceeding with analysis for video:', video);
+  
+  analyzeVideo(video).then(result => {
+    console.log('DeepSight: Analysis completed with result:', result);
+    chrome.runtime.sendMessage({
+      action: 'analysisResult',
+      result: result
+    });
+    sendResponse({ success: true, result: result });
+  }).catch(error => {
+    console.error('DeepSight: Analysis failed:', error);
+    const errorResult = { error: error.message };
+    chrome.runtime.sendMessage({
+      action: 'analysisResult',
+      result: errorResult
+    });
+    sendResponse({ success: false, error: error.message });
+  });
+}
+
+// Enhanced findMostLikelyVideo function for YouTube
 function findMostLikelyVideo() {
+  console.log('DeepSight: Finding most likely video...');
+  
+  // Try YouTube-specific selectors first
+  if (window.location.hostname.includes('youtube.com')) {
+    const youtubeSelectors = [
+      'video.html5-main-video',
+      '.html5-video-player video',
+      '#movie_player video',
+      'video.video-stream',
+      'video'
+    ];
+    
+    for (const selector of youtubeSelectors) {
+      const videos = document.querySelectorAll(selector);
+      console.log(`DeepSight: Trying selector '${selector}', found ${videos.length} videos`);
+      
+      if (videos.length > 0) {
+        // Filter for videos that are actually playing content
+        for (const video of videos) {
+          const width = video.videoWidth || video.offsetWidth;
+          const height = video.videoHeight || video.offsetHeight;
+          
+          console.log(`DeepSight: Checking video - width: ${width}, height: ${height}, readyState: ${video.readyState}`);
+          
+          if (width >= MIN_VIDEO_DIMENSION && height >= MIN_VIDEO_DIMENSION && video.readyState >= 1) {
+            console.log('DeepSight: Found suitable YouTube video');
+            return video;
+          }
+        }
+      }
+    }
+  }
+  
   const videos = document.querySelectorAll('video');
+  console.log(`DeepSight: Fallback search found ${videos.length} total videos`);
   
   if (videos.length === 0) return null;
   if (videos.length === 1) return videos[0];
   
-  // Prioritize videos that are:
-  // 1. Currently playing
-  // 2. Have reasonable dimensions
-  // 3. Are visible
-  
   let bestVideo = null;
   let bestScore = -1;
   
-  videos.forEach(video => {
+  videos.forEach((video, index) => {
     let score = 0;
+    
+    console.log(`DeepSight: Evaluating video ${index}:`, {
+      paused: video.paused,
+      readyState: video.readyState,
+      videoWidth: video.videoWidth,
+      videoHeight: video.videoHeight,
+      currentTime: video.currentTime,
+      duration: video.duration
+    });
     
     // Playing video gets priority
     if (!video.paused) score += 10;
@@ -249,12 +344,18 @@ function findMostLikelyVideo() {
     // Has current time (indicating it's been interacted with)
     if (video.currentTime > 0) score += 1;
     
+    // Has duration (not a live stream)
+    if (video.duration && !isNaN(video.duration) && video.duration < Infinity) score += 1;
+    
+    console.log(`DeepSight: Video ${index} score: ${score}`);
+    
     if (score > bestScore) {
       bestScore = score;
       bestVideo = video;
     }
   });
   
+  console.log(`DeepSight: Selected video with score ${bestScore}:`, bestVideo);
   return bestVideo;
 }
 
@@ -482,7 +583,7 @@ function addDetectButtonToVideo(video) {
   resizeObserver.observe(video);
 }
 
-// Enhanced analyze video function with platform-specific handling
+// Enhanced analyze video function with platform-specific handling and duration check
 async function analyzeVideo(video) {
   if (isAnalyzing || !extensionActive) {
     console.log('DeepSight: Already analyzing or extension inactive');
@@ -527,6 +628,14 @@ async function analyzeVideo(video) {
         // Try to load the video
         if (video.load) video.load();
       });
+    }
+    
+    // Check video duration - if greater than 30 minutes, return error
+    if (video.duration && !isNaN(video.duration) && video.duration > MAX_VIDEO_DURATION) {
+      const durationMinutes = Math.floor(video.duration / 60);
+      const durationSeconds = Math.floor(video.duration % 60);
+      console.log(`DeepSight: Video duration too long: ${durationMinutes}:${durationSeconds.toString().padStart(2, '0')}`);
+      throw new Error(`Video duration too long to analyze (${durationMinutes}:${durationSeconds.toString().padStart(2, '0')}). Maximum supported duration is 30 minutes.`);
     }
     
     // Check if video has valid dimensions

@@ -76,21 +76,36 @@ chrome.storage.local.set({ isActive: true }, () => {
       // Notify content script to activate (no response expected)
       sendMessageToContentScript(tabs[0].id, { action: "activate" });
       
-      // Add a small delay before requesting video info to ensure content script is ready
+      // Add a longer delay for YouTube to ensure content script is ready
+      const isYouTube = tabs[0].url && tabs[0].url.includes('youtube.com');
+      const delay = isYouTube ? 500 : 200;
+      
       setTimeout(() => {
         // Request current video info
         sendMessageToContentScript(tabs[0].id, { action: "getVideoInfo" }, (response) => {
+          console.log('DeepSight Popup: Received video info response:', response);
           if (response && response.hasVideo) {
             currentVideoInfo = response.videoInfo;
             updateUIWithVideo(response.videoInfo);
             setupAnalyzeButton();
           } else {
-            // No video found or content script not ready
-            updateUIWithVideo(null);
-            setupAnalyzeButton();
+            // No video found or content script not ready - try again after a longer delay
+            console.log('DeepSight Popup: No video found, retrying...');
+            setTimeout(() => {
+              sendMessageToContentScript(tabs[0].id, { action: "getVideoInfo" }, (retryResponse) => {
+                if (retryResponse && retryResponse.hasVideo) {
+                  currentVideoInfo = retryResponse.videoInfo;
+                  updateUIWithVideo(retryResponse.videoInfo);
+                  setupAnalyzeButton();
+                } else {
+                  updateUIWithVideo(null);
+                  setupAnalyzeButton();
+                }
+              });
+            }, 1000);
           }
         });
-      }, 100);
+      }, delay);
     }
   });
 });
@@ -113,6 +128,7 @@ window.addEventListener('unload', () => {
 
 // Listen for messages from content script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  console.log('DeepSight Popup: Received message from content script:', message);
   if (message.action === "analysisResult") {
     updateUIWithResult(message.result);
     // Send response to acknowledge receipt
@@ -174,6 +190,8 @@ function setupAnalyzeButton() {
   }
   
   function startAnalysis() {
+    console.log('DeepSight Popup: Starting analysis with video info:', currentVideoInfo);
+    
     // Update UI to analyzing state
     const resultEl = document.querySelector('.deepdetect-result');
     const confidenceEl = document.querySelector('.confidence-value');
@@ -197,12 +215,23 @@ function setupAnalyzeButton() {
       analyzeBtn.style.animation = 'gradient 1.5s ease infinite';
     }
     
-    // Request analysis from content script
+    // Request analysis from content script - pass both videoId and videoSrc
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]) {
-        sendMessageToContentScript(tabs[0].id, {
+        const analysisMessage = {
           action: "analyzeVideoInPopup",
-          videoSrc: currentVideoInfo.src
+          videoId: currentVideoInfo.id, // Pass the video ID
+          videoSrc: currentVideoInfo.src // Keep as fallback
+        };
+        
+        console.log('DeepSight Popup: Sending analysis request:', analysisMessage);
+        
+        sendMessageToContentScript(tabs[0].id, analysisMessage, (response) => {
+          // Handle case where message sending fails
+          if (!response) {
+            console.error('DeepSight Popup: Failed to send analysis request to content script');
+            updateUIWithResult({ error: 'Failed to communicate with content script. Please refresh the page.' });
+          }
         });
       }
     });
@@ -214,6 +243,8 @@ function updateUIWithVideo(videoInfo) {
   const previewEl = document.querySelector('.deepdetect-video-preview');
   const analyzeBtn = document.querySelector('.deepdetect-analyze-btn');
   const resultEl = document.querySelector('.deepdetect-result');
+  
+  console.log('DeepSight Popup: Updating UI with video info:', videoInfo);
   
   if (videoInfo && videoInfo.thumbnail) {
     if (previewEl) {
@@ -227,23 +258,38 @@ function updateUIWithVideo(videoInfo) {
       resultEl.textContent = 'Ready to analyze';
       resultEl.className = 'deepdetect-result';
     }
+  } else if (videoInfo && !videoInfo.thumbnail) {
+    // Video found but no thumbnail (CORS issue)
+    if (previewEl) {
+      previewEl.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; background: #333; border-radius: 8px; color: #fff;">Video Preview<br><small>(CORS Protected)</small></div>';
+    }
+    if (analyzeBtn) {
+      analyzeBtn.disabled = false;
+      analyzeBtn.textContent = 'Detect DeepFake';
+    }
+    if (resultEl) {
+      resultEl.textContent = 'Ready to analyze';
+      resultEl.className = 'deepdetect-result';
+    }
   } else {
     if (previewEl) {
-      previewEl.textContent = 'Select a video on the page to analyze';
+      previewEl.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; background: #333; border-radius: 8px; color: #fff;">No Video Found<br><small>Please navigate to a video</small></div>';
     }
     if (analyzeBtn) {
       analyzeBtn.disabled = true;
-      analyzeBtn.textContent = 'Select Video First';
+      analyzeBtn.textContent = 'No Video Found';
     }
     if (resultEl) {
-      resultEl.textContent = 'No video selected';
-      resultEl.className = 'deepdetect-result';
+      resultEl.textContent = 'No video found';
+      resultEl.className = 'deepdetect-result error';
     }
   }
 }
 
 // Update UI with analysis results
 function updateUIWithResult(result) {
+  console.log('DeepSight Popup: Updating UI with result:', result);
+  
   const resultEl = document.querySelector('.deepdetect-result');
   const confidenceEl = document.querySelector('.confidence-value');
   const barEl = document.querySelector('.confidence-bar');

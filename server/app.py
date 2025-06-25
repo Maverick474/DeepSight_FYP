@@ -6,7 +6,6 @@ import time
 import shutil
 import glob
 import datetime
-from random import choice
 import torch
 import torchvision
 from torchvision import transforms
@@ -17,14 +16,16 @@ import face_recognition
 from PIL import Image as pImage
 import matplotlib.pyplot as plt
 import matplotlib
-matplotlib.use('Agg')  # Use non-GUI backend for matplotlib
-from typing import List
+matplotlib.use('Agg')
+import re
+import logging
 import base64
-import io
 
 app = FastAPI()
 
-# Configure CORS
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -33,15 +34,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Create directories if they don't exist
 os.makedirs("uploaded_images", exist_ok=True)
 os.makedirs("static", exist_ok=True)
+os.makedirs("static/heatmaps", exist_ok=True)
+os.makedirs("static/uploaded_images", exist_ok=True)
+os.makedirs("uploaded_videos", exist_ok=True)
 
-# Mount static files - FIXED: Added leading slash
-app.mount("/uploaded_images", StaticFiles(directory="uploaded_images"), name="uploaded_images")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Configuration
 im_size = 112
 mean = [0.485, 0.456, 0.406]
 std = [0.229, 0.224, 0.225]
@@ -57,8 +57,38 @@ train_transforms = transforms.Compose([
 
 ALLOWED_VIDEO_EXTENSIONS = {'mp4', 'gif', 'webm', 'avi', '3gp', 'wmv', 'flv', 'mkv'}
 
-# Detects GPU in device 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+logger.info(f"Using device: {device}")
+
+def detect_and_crop_face(frame, padding=40, min_face_size=100):
+    face_locations = face_recognition.face_locations(frame)
+    if not face_locations:
+        return None, None
+    
+    face_sizes = [(bottom - top, right - left) for top, right, bottom, left in face_locations]
+    largest_idx = np.argmax([w * h for h, w in face_sizes])
+    top, right, bottom, left = face_locations[largest_idx]
+    
+    face_height = bottom - top
+    face_width = right - left
+    if face_height < min_face_size or face_width < min_face_size:
+        return None, None
+    
+    top_pad = max(0, top - padding)
+    bottom_pad = min(frame.shape[0], bottom + padding)
+    left_pad = max(0, left - padding)
+    right_pad = min(frame.shape[1], right + padding)
+    
+    return frame[top_pad:bottom_pad, left_pad:right_pad, :], (top, right, bottom, left)
+
+def draw_face_rectangles(frame, face_coords, is_real=True):
+    top, right, bottom, left = face_coords
+    color = (0, 255, 0) if is_real else (0, 0, 255)
+    cv2.rectangle(frame, (left, top), (right, bottom), color, 2)
+    label = "Face"
+    cv2.putText(frame, label, (left, top - 10), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+    return frame
 
 class Model(nn.Module):
     def __init__(self, num_classes, latent_dim=2048, lstm_layers=1, hidden_dim=2048, bidirectional=False):
@@ -81,10 +111,11 @@ class Model(nn.Module):
         return fmap, self.dp(self.linear1(x_lstm[:, -1, :]))
 
 class ValidationDataset(torch.utils.data.Dataset):
-    def __init__(self, video_names, sequence_length=60, transform=None):
+    def __init__(self, video_names, sequence_length=40, transform=None, min_face_size=100):
         self.video_names = video_names
         self.transform = transform
         self.count = sequence_length
+        self.min_face_size = min_face_size
 
     def __len__(self):
         return len(self.video_names)
@@ -92,21 +123,31 @@ class ValidationDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         video_path = self.video_names[idx]
         frames = []
-        a = int(100/self.count)
-        first_frame = np.random.randint(0, a)
+        valid_frames = []
+        padding = 40
+        
         for i, frame in enumerate(self.frame_extract(video_path)):
-            faces = face_recognition.face_locations(frame)
+            cropped_frame, _ = detect_and_crop_face(frame, padding, self.min_face_size)
+            if cropped_frame is not None:
+                valid_frames.append(cropped_frame)
+                if len(valid_frames) == self.count:
+                    break
+        
+        if len(valid_frames) < self.count and valid_frames:
+            last_valid = valid_frames[-1]
+            valid_frames += [last_valid] * (self.count - len(valid_frames))
+        
+        for frame in valid_frames:
             try:
-                top, right, bottom, left = faces[0]
-                frame = frame[top:bottom, left:right, :]
+                frames.append(self.transform(frame))
             except:
-                pass
-            frames.append(self.transform(frame))
-            if (len(frames) == self.count):
-                break
+                frame_pil = transforms.ToPILImage()(frame)
+                frame_tensor = transforms.Resize((im_size, im_size))(frame_pil)
+                frame_tensor = transforms.ToTensor()(frame_tensor)
+                frames.append(frame_tensor)
+                
         frames = torch.stack(frames)
-        frames = frames[:self.count]
-        return frames.unsqueeze(0)  # Shape: (1, seq_len, C, H, W)
+        return frames.unsqueeze(0)
 
     def frame_extract(self, path):
         vidObj = cv2.VideoCapture(path)
@@ -117,42 +158,29 @@ class ValidationDataset(torch.utils.data.Dataset):
                 yield image
 
 def allowed_video_file(filename):
-    return filename.split('.')[-1].lower() in ALLOWED_VIDEO_EXTENSIONS
+    return '.' in filename and filename.split('.')[-1].lower() in ALLOWED_VIDEO_EXTENSIONS
 
 def get_accurate_model(sequence_length):
-    model_name = []
-    sequence_model = []
-    final_model = ""
-    
-    # Create models directory if it doesn't exist
-    os.makedirs("models", exist_ok=True)
     list_models = glob.glob(os.path.join("models", "*.pt"))
-
-    for i in list_models:
-        model_name.append(os.path.basename(i))
-
-    for i in model_name:
-        try:
-            seq = i.split("_")[3]
-            if (int(seq) == sequence_length):
-                sequence_model.append(i)
-        except:
-            pass
-
-    if len(sequence_model) > 1:
-        accuracy = []
-        for i in sequence_model:
-            acc = i.split("_")[1]
-            accuracy.append(acc)
-        max_index = accuracy.index(max(accuracy))
-        final_model = sequence_model[max_index]
-    else:
-        final_model = sequence_model[0] if sequence_model else None
+    target_seq_str = str(sequence_length)
+    candidate_models = []
     
-    return final_model
+    for model_path in list_models:
+        filename = os.path.basename(model_path)
+        numbers = re.findall(r'\d+', filename)
+        if target_seq_str in numbers:
+            candidate_models.append(filename)
+    
+    if candidate_models:
+        return candidate_models[0]
+    else:
+        for model_path in list_models:
+            filename = os.path.basename(model_path)
+            if "40" in filename:
+                return filename
+    return None
 
 def im_convert(tensor, video_file_name=""):
-    """Convert tensor to image for visualization."""
     image = tensor.to("cpu").clone().detach()
     image = image.squeeze()
     image = inv_normalize(image)
@@ -162,73 +190,45 @@ def im_convert(tensor, video_file_name=""):
     return image
 
 def generate_gradcam_heatmap(model, img, video_file_name=""):
-    """Generate GradCAM heatmap showing areas of focus for deepfake detection."""
-    # Assume model and img are already on GPU (device)
-    
-    # Forward pass
-    fmap, logits = model(img)  # fmap shape: (batch_size * seq_len, channels, h, w)
-    
-    # Softmax on logits (keep on GPU)
+    fmap, logits = model(img)
     logits_softmax = sm(logits)
     confidence, prediction = torch.max(logits_softmax, 1)
     confidence_val = confidence.item() * 100
     pred_idx = prediction.item()
-    
-    # Move weights and fmap to CPU only when converting to numpy
     weight_softmax = model.linear1.weight.detach().cpu().numpy()
-    
-    # Use last frame feature map (last in batch dimension)
     fmap_last = fmap[-1].detach().cpu().numpy()
     nc, h, w = fmap_last.shape
     fmap_reshaped = fmap_last.reshape(nc, h*w)
-    
-    # Compute GradCAM heatmap
     heatmap_raw = np.dot(fmap_reshaped.T, weight_softmax[pred_idx, :].T)
     heatmap_raw -= heatmap_raw.min()
     heatmap_raw /= heatmap_raw.max()
     heatmap_img = np.uint8(255 * heatmap_raw.reshape(h, w))
-    
-    # Resize heatmap to model input size
     heatmap_resized = cv2.resize(heatmap_img, (im_size, im_size))
     heatmap_colored = cv2.applyColorMap(heatmap_resized, cv2.COLORMAP_JET)
-    
-    # Convert original image tensor to numpy (must move to CPU)
     original_img = im_convert(img[:, -1, :, :, :])
     original_img_uint8 = (original_img * 255).astype(np.uint8)
-    
-    # Overlay heatmap on original image
     overlay = cv2.addWeighted(original_img_uint8, 0.6, heatmap_colored, 0.4, 0)
-    
-    # Save heatmap and overlay images
-    os.makedirs(os.path.join("static", "heatmaps"), exist_ok=True)
     heatmap_filename = f"{video_file_name}_heatmap_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
     heatmap_path = os.path.join("static", "heatmaps", heatmap_filename)
     cv2.imwrite(heatmap_path, overlay)
-    
-    # Matplotlib visualization
     plt.figure(figsize=(15, 5))
     plt.subplot(1, 3, 1)
     plt.imshow(original_img)
     plt.title('Original Frame')
     plt.axis('on')
-    
     plt.subplot(1, 3, 2)
     plt.imshow(heatmap_resized, cmap='jet')
     plt.title('Attention Heatmap')
     plt.axis('on')
-    
     plt.subplot(1, 3, 3)
-    plt.imshow(overlay[..., ::-1])  # convert BGR to RGB for matplotlib
+    plt.imshow(overlay[..., ::-1])
     plt.title(f'Overlay - Prediction: {"REAL" if pred_idx == 1 else "FAKE"} ({confidence_val:.1f}%)')
     plt.axis('on')
-    
     plt.tight_layout()
-    
     plt_filename = f"{video_file_name}_analysis_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
     plt_path = os.path.join("static", "heatmaps", plt_filename)
     plt.savefig(plt_path, dpi=150, bbox_inches='tight')
     plt.close()
-    
     return {
         'prediction': pred_idx,
         'confidence': confidence_val,
@@ -236,412 +236,291 @@ def generate_gradcam_heatmap(model, img, video_file_name=""):
         'analysis_path': f"/static/heatmaps/{plt_filename}"
     }
 
-
 def predict_with_gradcam(model, img, video_file_name=""):
-    """Enhanced prediction function with GradCAM visualization."""
     return generate_gradcam_heatmap(model, img, video_file_name)
 
 @app.post("/api/upload")
-async def api_upload_video(file: UploadFile = File(...), sequence_length: int = 20):
+async def api_upload_video(file: UploadFile = File(...)):
     if not allowed_video_file(file.filename):
         raise HTTPException(status_code=400, detail="Only video files are allowed")
     
-    # Save the uploaded file
     file_ext = file.filename.split('.')[-1]
     saved_video_file = f'uploaded_video_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}.{file_ext}'
-    
-    # Create uploaded_videos directory if it doesn't exist
-    os.makedirs("uploaded_videos", exist_ok=True)
     file_path = os.path.join("uploaded_videos", saved_video_file)
     
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     
-    # Process the video
-    result = await process_video(file_path, sequence_length)
-    
+    logger.info(f"Video saved to: {file_path}")
+    result = await process_video(file_path)
     return {
         "status": "success",
         "result": result["output"],
         "confidence": result["confidence"],
-        "accuracy": result["accuracy"],
-        "frames_processed": sequence_length,
-        "preprocessed_images": result["preprocessed_images"],
+        "frames_processed": result["frames_used"],
+        "annotated_images": result["annotated_images"],
         "faces_cropped_images": result["faces_cropped_images"],
         "heatmap_image": result["heatmap_image"],
         "analysis_image": result["analysis_image"],
         "gradcam_explanation": result["gradcam_explanation"]
     }
 
-async def process_video(video_file, sequence_length):
+async def process_video(video_file):
     try:
-        # Validate video file exists
         if not os.path.exists(video_file):
             raise HTTPException(status_code=400, detail="Video file not found")
 
-        path_to_videos = [video_file]
         video_file_name = os.path.basename(video_file)
         video_file_name_only = os.path.splitext(video_file_name)[0]
+        target_faces = 40
+        min_faces_required = 30
+        max_frames_to_scan = 80
+        static_uploaded_images_dir = os.path.join("static", "uploaded_images")
+        os.makedirs(static_uploaded_images_dir, exist_ok=True)
+        cap = cv2.VideoCapture(video_file)
+        frame_count = 0
+        valid_faces = []
+        face_coords_list = []
+        original_frames = []
+        faces_cropped_images = []
         
-        # Create dataset
-        video_dataset = ValidationDataset(
-            path_to_videos, sequence_length=sequence_length, transform=train_transforms)
+        while cap.isOpened() and frame_count < max_frames_to_scan:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            frame_count += 1
+            cropped_frame, face_coords = detect_and_crop_face(frame, padding=0)
+            if cropped_frame is None:
+                continue
+            valid_faces.append(cropped_frame)
+            face_coords_list.append(face_coords)
+            original_frames.append(frame.copy())
+            cropped_face_rgb = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2RGB)
+            cropped_face_img = pImage.fromarray(cropped_face_rgb, 'RGB')
+            cropped_image_name = f"{video_file_name_only}_cropped_face_{len(valid_faces)}.png"
+            cropped_image_path = os.path.join(static_uploaded_images_dir, cropped_image_name)
+            cropped_face_img.save(cropped_image_path)
+            faces_cropped_images.append(f"/static/uploaded_images/{cropped_image_name}")
+            
+            print(f"Found face in frame {frame_count} - total faces: {len(valid_faces)}")
+            
+            if len(valid_faces) == target_faces:
+                break
+        cap.release()
         
-        # Load model to device
-        model = Model(2).to(device)  # UPDATED for GPU
-        model_filename = get_accurate_model(sequence_length)
+        if len(valid_faces) < min_faces_required:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Insufficient frames with detectable faces found in {frame_count} frames (minimum {min_faces_required} required)"
+            )
         
+        if len(valid_faces) >= target_faces:
+            processed_frames = valid_faces[:target_faces]
+            frames_used = target_faces
+        else:
+            processed_frames = valid_faces
+            frames_used = len(valid_faces)
+        
+        logger.info(f"Used {frames_used} faces for prediction")
+        transformed_frames = [train_transforms(frame) for frame in processed_frames]
+        frames_tensor = torch.stack(transformed_frames)
+        frames_tensor = frames_tensor.unsqueeze(0).to(device)
+        model = Model(2).to(device)
+        model_filename = get_accurate_model(frames_used) or get_accurate_model(40)
         if not model_filename:
             raise HTTPException(
                 status_code=500, 
-                detail=f"No suitable model found for sequence length {sequence_length}"
+                detail=f"No suitable model found for sequence length {frames_used} or 40"
             )
-        
         model_path = os.path.join("models", model_filename)
-        
         if not os.path.exists(model_path):
             raise HTTPException(
                 status_code=500, 
                 detail=f"Model file not found at {model_path}"
             )
-        
-        model.load_state_dict(torch.load(model_path, map_location=device))  # UPDATED for GPU
+        model.load_state_dict(torch.load(model_path, map_location=device))
         model.eval()
-        
-        # Process frames for visualization
-        cap = cv2.VideoCapture(video_file)
-        frames = []
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if ret:
-                frames.append(frame)
-            else:
-                break
-        cap.release()
-        
-        if not frames:
-            raise HTTPException(status_code=400, detail="No frames could be read from the video")
-        
-        # Create directories if they don't exist
-        os.makedirs(os.path.join("static", "uploaded_images"), exist_ok=True)
-        
-        # Save preprocessed images
-        preprocessed_images = []
-        for i in range(1, min(sequence_length + 1, len(frames))):
-            try:
-                frame = frames[i]
-                image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                img = pImage.fromarray(image, 'RGB')
-                image_name = f"{video_file_name_only}_preprocessed_{i}.png"
-                image_path = os.path.join("static", "uploaded_images", image_name)
-                img.save(image_path)
-                preprocessed_images.append(f"/static/uploaded_images/{image_name}")
-            except Exception as e:
-                print(f"Error processing frame {i}: {str(e)}")
-                continue
-        
-        # Face detection and cropping
-        padding = 40
-        faces_cropped_images = []
-        faces_found = 0
-        
-        for i in range(1, min(sequence_length + 1, len(frames))):
-            try:
-                frame = frames[i]
-                face_locations = face_recognition.face_locations(frame)
-                
-                if not face_locations:
-                    continue
-                    
-                top, right, bottom, left = face_locations[0]
-                frame_face = frame[
-                    max(0, top-padding):min(frame.shape[0], bottom+padding),
-                    max(0, left-padding):min(frame.shape[1], right+padding)
-                ]
-                image = cv2.cvtColor(frame_face, cv2.COLOR_BGR2RGB)
-                img = pImage.fromarray(image, 'RGB')
-                image_name = f"{video_file_name_only}_cropped_faces_{i}.png"
-                image_path = os.path.join("static", "uploaded_images", image_name)
-                img.save(image_path)
-                faces_found += 1
-                faces_cropped_images.append(f"/static/uploaded_images/{image_name}")
-            except Exception as e:
-                print(f"Error processing face in frame {i}: {str(e)}")
-                continue
-        
-        if faces_found == 0:
-            raise HTTPException(status_code=400, detail="No faces detected in the video")
-        
-        # Make prediction with GradCAM
-        try:
-            # Move dataset tensor to device
-            input_tensor = video_dataset[0].to(device)  # UPDATED for GPU
-            
-            gradcam_result = predict_with_gradcam(model, input_tensor, video_file_name_only)
-            confidence = round(gradcam_result['confidence'], 1)
-            output = "REAL" if gradcam_result['prediction'] == 1 else "FAKE"
-            
-            # Extract accuracy from model filename safely
-            try:
-                accuracy = model_filename.split("_")[1] if len(model_filename.split("_")) > 1 else "00"
-                decimal = model_filename.split("_")[2] if len(model_filename.split("_")) > 2 else "00"
-            except:
-                accuracy = "00"
-                decimal = "00"
-            
-            # Create explanation for GradCAM
-            gradcam_explanation = {
-                "description": "The heatmap shows areas where the AI model focused its attention when making the prediction.",
-                "interpretation": {
-                    "red_areas": "High attention - areas that strongly influenced the decision",
-                    "yellow_areas": "Medium attention - moderately important areas", 
-                    "blue_areas": "Low attention - areas with minimal influence on the decision"
-                },
-                "prediction_basis": f"The model classified this video as {output} with {confidence}% confidence based on the highlighted facial regions."
-            }
-            
-            return {
-                "preprocessed_images": preprocessed_images,
-                "faces_cropped_images": faces_cropped_images,
-                "output": output,
-                "confidence": confidence,
-                "accuracy": accuracy,
-                "decimal": decimal,
-                "heatmap_image": gradcam_result['heatmap_path'],
-                "analysis_image": gradcam_result['analysis_path'],
-                "gradcam_explanation": gradcam_explanation
-            }
-        except Exception as e:
-            raise HTTPException(
-                status_code=500, 
-                detail=f"Error making prediction: {str(e)}"
-            )
-            
+        gradcam_result = predict_with_gradcam(model, frames_tensor, video_file_name_only)
+        confidence = round(gradcam_result['confidence'], 1)
+        output = "REAL" if gradcam_result['prediction'] == 1 else "FAKE"
+        is_real = output == "REAL"
+        annotated_images = []
+        for idx, (frame, face_coords) in enumerate(zip(original_frames, face_coords_list)):
+            annotated_frame = draw_face_rectangles(frame.copy(), face_coords, is_real)
+            annotated_frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+            annotated_img = pImage.fromarray(annotated_frame_rgb, 'RGB')
+            annotated_image_name = f"{video_file_name_only}_annotated_{idx+1}.png"
+            annotated_image_path = os.path.join(static_uploaded_images_dir, annotated_image_name)
+            annotated_img.save(annotated_image_path)
+            annotated_images.append(f"/static/uploaded_images/{annotated_image_name}")
+        gradcam_explanation = {
+            "description": "The heatmap shows areas where the AI model focused its attention when making the prediction.",
+            "interpretation": {
+                "red_areas": "High attention - areas that strongly influenced the decision",
+                "yellow_areas": "Medium attention - moderately important areas", 
+                "blue_areas": "Low attention - areas with minimal influence on the decision"
+            },
+            "prediction_basis": f"The model classified this video as {output} with {confidence}% confidence based on the highlighted facial regions."
+        }
+        return {
+            "annotated_images": annotated_images,
+            "faces_cropped_images": faces_cropped_images,
+            "output": output,
+            "confidence": confidence,
+            "frames_used": frames_used,
+            "heatmap_image": gradcam_result['heatmap_path'],
+            "analysis_image": gradcam_result['analysis_path'],
+            "gradcam_explanation": gradcam_explanation
+        }
     except HTTPException:
-        raise  # Re-raise HTTPExceptions
+        raise
     except Exception as e:
+        logger.error(f"Error processing video: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500, 
             detail=f"Error processing video: {str(e)}"
         )
 
-#Extension Endpoint
 @app.post("/predict")
-
 async def predict_frames(data: dict):
-
     try:
-
         print("Received request to /predict endpoint")
-
         frames = data.get('frames', [])
-
         if not frames:
-
             print("No frames provided in request")
-
             raise HTTPException(status_code=400, detail="No frames provided")
 
-
-
         print(f"Processing {len(frames)} frames")
-
-        sequence_length = 20
-
-        processed_frames = []
-
+        target_frames = 40
+        min_frames_required = 30  # Increased from 20 to 30
+        max_frames_to_scan = 80
+        valid_faces = []
         
-
-        for i, frame_base64 in enumerate(frames[:sequence_length]):
-
+        frames_to_process = frames[:max_frames_to_scan]
+        print(f"Scanning {len(frames_to_process)} frames for faces")
+        
+        for i, frame_base64 in enumerate(frames_to_process):
             try:
-
                 if ',' in frame_base64:
-
                     frame_base64 = frame_base64.split(',')[1]
-
                 
-
                 frame_data = base64.b64decode(frame_base64)
-
                 frame = cv2.imdecode(
-
                     np.frombuffer(frame_data, np.uint8),
-
                     cv2.IMREAD_COLOR
-
                 )
-
-
+                
+                if frame is None:
+                    print(f"Frame {i+1} is None, skipping")
+                    continue
+                    
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 
-                # Attempt face detection but don't require it
-                try:
-                    faces = face_recognition.face_locations(frame)
-                    if faces:
-                        top, right, bottom, left = faces[0]
-                        # Ensure we don't crop too aggressively
-                        height, width = frame.shape[:2]
-                        margin = int(min(width, height) * 0.1)  # 10% margin
-                        
-                        # Add margins and ensure bounds
-                        top = max(0, top - margin)
-                        bottom = min(height, bottom + margin)
-                        left = max(0, left - margin)
-                        right = min(width, right + margin)
-                        
-                        frame = frame[top:bottom, left:right, :]
-                        print(f"Face detected in frame {i+1} with margins")
-                    else:
-                        # If no face detected, use the whole frame
-                        print(f"No face detected in frame {i+1}, using full frame")
-                except Exception as e:
-                    print(f"Face detection error in frame {i+1}: {str(e)}, using full frame")
+                cropped_frame, _ = detect_and_crop_face(frame)
+                if cropped_frame is None:
+                    continue
+                    
+                valid_faces.append(cropped_frame)
+                print(f"Found face in frame {i+1} - total faces: {len(valid_faces)}")
                 
-                # Resize frame if too large
-                height, width = frame.shape[:2]
-                max_dimension = 512  # Maximum dimension to process
-                if height > max_dimension or width > max_dimension:
-                    scale = max_dimension / max(height, width)
-                    new_width = int(width * scale)
-                    new_height = int(height * scale)
-                    frame = cv2.resize(frame, (new_width, new_height), interpolation=cv2.INTER_AREA)
-                    print(f"Resized frame {i+1} to {new_width}x{new_height}")
+                if len(valid_faces) == target_frames:
+                    break
                 
-                processed_frames.append(frame)
-
             except Exception as e:
                 print(f"Error processing frame {i+1}: {str(e)}")
                 continue
 
+        print(f"Found {len(valid_faces)} frames with detectable faces in {max_frames_to_scan} frames")
+        
+        if len(valid_faces) < min_frames_required:
+            return {
+                "error": "insufficient_faces",
+                "message": f"Insufficient faces detected (minimum {min_frames_required} required, found {len(valid_faces)})"
+            }
 
-
-        if not processed_frames:
-
-            print("No valid frames could be processed")
-
-            raise HTTPException(status_code=400, detail="No valid frames could be processed")
-
-
-
-        print(f"Successfully processed {len(processed_frames)} frames")
-
-
+        processed_frames = valid_faces
+        actual_sequence_length = len(processed_frames)
+        print(f"Using {actual_sequence_length} faces for prediction")
 
         frames_tensor = torch.stack([
-
             train_transforms(frame) for frame in processed_frames
-
         ])
+        frames_tensor = frames_tensor.unsqueeze(0).to(device)  # Use device
 
-        frames_tensor = frames_tensor.unsqueeze(0)
-
-
-
-        model = Model(2).cpu()
-
-        model_filename = get_accurate_model(sequence_length)
-
+        model = Model(2).to(device)  # Use device
+        model_filename = get_accurate_model(actual_sequence_length)
         
-
         if not model_filename:
-
-            print(f"No suitable model found for sequence length {sequence_length}")
-
+            print(f"No suitable model found for sequence length {actual_sequence_length}, trying 40")
+            model_filename = get_accurate_model(40)
+        
+        if not model_filename:
+            print(f"No suitable model found for sequence lengths {actual_sequence_length} or 40")
             raise HTTPException(
-
                 status_code=500,
-
-                detail=f"No suitable model found for sequence length {sequence_length}"
-
+                detail=f"No suitable model found for sequence lengths {actual_sequence_length} or 40"
             )
-
         
-
-        print(f"Using model: {model_filename}")
-
+        print(f"Using model: {model_filename} for sequence length {actual_sequence_length}")
         
-
-        # Extract model accuracy from filename
-
-        try:
-
-            parts = model_filename.split('_')
-
-            accuracy = float(parts[1])  # Get the 87 from the filename
-
-            print(f"Extracted accuracy: {accuracy}%")
-
-            if accuracy <= 0 or accuracy > 100:
-
-                print("Invalid accuracy value, using default")
-
-                accuracy = 87.0
-
-        except Exception as e:
-
-            print(f"Error extracting accuracy: {str(e)}")
-
-            accuracy = 87.0  # Fallback to known accuracy
-
-            print(f"Using default accuracy: {accuracy}%")
-
-        
-
         model_path = os.path.join("models", model_filename)
-
         print(f"Loading model from: {model_path}")
-
-        model.load_state_dict(torch.load(model_path, map_location=torch.device('cpu')))
-
+        model.load_state_dict(torch.load(model_path, map_location=device))  # Use device
         model.eval()
 
-
-
         with torch.no_grad():
-
             _, logits = model(frames_tensor)
-
             probabilities = sm(logits)
-
             _, prediction = torch.max(probabilities, 1)
-
             confidence = probabilities[:, int(prediction.item())].item() * 100
-
             
-
-            # In your model, 1 is REAL and 0 is FAKE
-
-            is_fake = prediction.item() == 0
-
-            print(f"Prediction: {'FAKE' if is_fake else 'REAL'} with {confidence:.2f}% confidence")
-
-            print(f"Model accuracy: {accuracy}%")
-
-
+            original_is_fake = prediction.item() == 0
+            original_prediction = "FAKE" if original_is_fake else "REAL"
+            
+            # Revised confidence threshold logic
+            if original_prediction == "FAKE":
+                # Require higher confidence for FAKE predictions
+                if confidence < 65:  # Increased threshold for FAKE
+                    is_fake = False
+                    final_prediction = "REAL"
+                    confidence_message = f"{confidence:.2f}% (low confidence fake)"
+                else:
+                    is_fake = True
+                    final_prediction = "FAKE"
+                    confidence_message = f"{confidence:.2f}%"
+            else:
+                # More lenient with REAL predictions
+                if confidence < 50:  # Lower threshold for REAL
+                    is_fake = True
+                    final_prediction = "FAKE"
+                    confidence_message = f"{confidence:.2f}% (low confidence real)"
+                else:
+                    is_fake = False
+                    final_prediction = "REAL"
+                    confidence_message = f"{confidence:.2f}%"
+            
+            print(f"Original prediction: {original_prediction} with {confidence:.2f}% confidence")
+            print(f"Final prediction: {final_prediction} with {confidence_message}")
 
         response_data = {
-
             "is_fake": is_fake,
-
             "confidence": confidence,
-
-            "frames_processed": len(processed_frames),
-
-            "model_accuracy": accuracy
-
+            "prediction": final_prediction,
+            "original_prediction": original_prediction,
+            "confidence_threshold_applied": confidence_message != f"{confidence:.2f}%",
+            "frames_used": len(processed_frames),
+            "original_frames_count": len(frames),
+            "valid_faces_found": len(valid_faces),
+            "frame_selection": f"{len(valid_faces)} faces from {max_frames_to_scan} frames",
+            "frames_scanned": min(len(frames_to_process), max_frames_to_scan),
+            "prediction_basis": f"Result based on {len(valid_faces)} facial frames",
+            "sequence_length_used": actual_sequence_length
         }
-
         print(f"Sending response: {response_data}")
-
         return response_data
 
-
-
     except Exception as e:
-
         print(f"Error in predict_frames: {str(e)}")
-
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/test")
