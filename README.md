@@ -56,7 +56,7 @@ Extract using winrar
 `localhost: http://localhost:5173/`
 
 ## Frontend Extension Setup
-- Open up google chrome and navigate to `chrome://extensions/` page
+- Open up google chrome and navigate to page `chrome://extensions/`
 - Enable developer mode
 - Load the extension from extension folder
 - Navigate to socail platforms such as Youtube Twitter Instagram and start detecting videos
