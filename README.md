@@ -69,6 +69,13 @@ Extract using winrar
 3. Wait for the analysis to complete
 4. View the deepfake detection results with confidence score
 
+## Chrome Extension
+1. Installation: Follow the Browser Extension Setup instructions above
+2. Activation: Click the DeepSight extension icon in your browser toolbar
+3. Real-time Detection: The extension automatically scans video content on web pages
+4. Results: Detection results appear as overlay notifications on detected videos
+5. Supported Platforms: Works on YouTube Twitter Instagram, social media platforms, and other video hosting sites
+
 ## License
 This project is licensed under the MIT License - see the LICENSE file for details.
 
