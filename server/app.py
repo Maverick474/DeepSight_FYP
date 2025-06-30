@@ -90,6 +90,26 @@ def draw_face_rectangles(frame, face_coords, is_real=True):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
     return frame
 
+class AttentionLayer(nn.Module):
+    def __init__(self, hidden_dim, dropout=0.3):
+        super(AttentionLayer, self).__init__()
+        self.hidden_dim = hidden_dim
+        self.attention_net = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.Tanh(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim // 2, 1, bias=False)
+        )
+
+    def forward(self, lstm_output):
+        attention_scores = self.attention_net(lstm_output)
+        attention_scores = torch.softmax(attention_scores, dim=1)
+
+        # Apply attention weights
+        attended_output = torch.sum(lstm_output * attention_scores, dim=1)  # (batch_size, hidden_dim)
+
+        return attended_output, attention_scores
+
 class Model(nn.Module):
     def __init__(self, num_classes, latent_dim=2048, lstm_layers=1, hidden_dim=2048, bidirectional=False):
         super(Model, self).__init__()
@@ -307,6 +327,7 @@ async def process_video(video_file):
             if len(valid_faces) == target_faces:
                 break
         cap.release()
+        logger.info("Using Attention Layer...")
         
         if len(valid_faces) < min_faces_required:
             raise HTTPException(
