@@ -92,7 +92,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 For questions or support, please open an issue on GitHub or contact the development team.
 
 ## Acknowledgments
-The ResNext-50 architecture is designed for robust feature extraction, enabling the model to capture complex patterns in data effectively. Attention mechanisms are incorporated to enhance detection accuracy by allowing the model to focus on the most relevant parts of the input data. Additionally, LSTM networks are utilized for temporal sequence analysis, providing the model with the ability to understand and predict sequences over time.
+The ResNext-50 architecture is designed for robust feature extraction, enabling the model to capture complex patterns in data effectively. LSTM networks are utilized for temporal sequence analysis, providing the model with the ability to understand and predict sequences over time. Additionally, Attention mechanisms are incorporated to enhance detection accuracy by allowing the model to focus on the most relevant parts of the input data.
 
 
 
