@@ -76,6 +76,16 @@ Extract using winrar
 4. Results: Detection results appear as overlay notifications on detected videos
 5. Supported Platforms: Works on YouTube Twitter Instagram, social media platforms, and other video hosting sites
 
+## Contribution Team
+### Students
+- M. Zain Haseeb
+- Tayyab Imam
+- Mahnoor Tareen
+
+### Advisors
+- Asma Basharat (Primary)
+- Muneeb Rashid
+
 ## License
 This project is licensed under the MIT License - see the LICENSE file for details.
 
@@ -83,9 +93,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 For questions or support, please open an issue on GitHub or contact the development team.
 
 ## Acknowledgments
-- ResNext architecture for robust feature extraction
-- Attention mechanisms for enhanced detection accuracy
-- LSTM networks for temporal sequence analysis
+The ResNext-50 architecture is designed for robust feature extraction, enabling the model to capture complex patterns in data effectively. Attention mechanisms are incorporated to enhance detection accuracy by allowing the model to focus on the most relevant parts of the input data. Additionally, LSTM networks are utilized for temporal sequence analysis, providing the model with the ability to understand and predict sequences over time.
 
 
 
