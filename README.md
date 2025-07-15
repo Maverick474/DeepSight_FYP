@@ -78,6 +78,8 @@ Extract using winrar
 ## Demo Video
 ### Web App
 
+https://github.com/user-attachments/assets/10ac11b2-f53a-4162-92ea-b9c85cdbae82
+
 
 ## Contribution Team
 ### Students
