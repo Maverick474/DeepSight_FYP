@@ -75,6 +75,10 @@ Extract using winrar
 4. Results: Detection results appear as overlay notifications on detected videos
 5. Supported Platforms: Works on YouTube Twitter Instagram, social media platforms, and other video hosting sites
 
+## Demo Video
+### Web App
+
+
 ## Contribution Team
 ### Students
 - M. Zain Haseeb
