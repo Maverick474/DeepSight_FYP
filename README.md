@@ -4,7 +4,7 @@
 Deepfakes are AI-generated synthetic media, typically videos or audio, that manipulate a person’s appearance or voice to create highly realistic but fake content. Created using deep learning techniques like GANs and autoencoders, they can be used for both creative and malicious purposes. While useful in areas like film and education, deepfakes pose serious risks to privacy, security, and digital trust by enabling the spread of misinformation and identity manipulation.
 
 ## Overview
-DeepSight leverages ResNeXt-50 as its core feature extraction backbone for robust visual pattern recognition. It utilizes LSTM for temporal sequence modeling to analyze frame-to-frame consistency, and by integrating an attention mechanism, it focuses on the most important frames and highlights their critical regions. This combination is all optimized for real-time performance at 40 FPS.
+DeepSight leverages ResNeXt-50 as its core feature extraction backbone for robust visual pattern recognition. It utilizes LSTM for temporal sequence modeling to analyze frame-to-frame consistency, and by integrating an attention mechanism, it focuses on the most important frames and highlights their critical regions. This combination is all optimized for real-time performance at 40 FPS. Code for the model can be found [here](https://github.com/Maverick474/DeepSight_Model.git)
 
 ## Installation and Setup
 ### Prerequisites
